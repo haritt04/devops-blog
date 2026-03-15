@@ -3,8 +3,6 @@ layout: home
 title: DevOps Learning Blog
 ---
 
-# DevOps Learning Blog
-
 Welcome to my personal technology blog.
 
 This space is where I document my hands-on learning journey in **DevOps, cloud technologies, automation, and other software engineering topics**. Here, I share my **labs, experiments, troubleshooting experiences, and solutions** that I encounter while learning and building projects.
