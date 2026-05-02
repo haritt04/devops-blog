@@ -1,5 +1,6 @@
 title: Nyi Nyi Phyo's Blog
 description: Insights on Kubernetes, DevOps, and Infrastructure.
 theme: minima
+future: true
 plugins:
   - jekyll-feed
