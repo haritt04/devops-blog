@@ -1,3 +1,5 @@
-title: DevOps Learning Blog
-description: Notes and experiments while learning DevOps
+title: Nyi Nyi Phyo's Blog
+description: Insights on Kubernetes, DevOps, and Infrastructure.
 theme: minima
+plugins:
+  - jekyll-feed
