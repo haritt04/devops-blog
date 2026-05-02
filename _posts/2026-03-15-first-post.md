@@ -1,7 +1,7 @@
 ---
 title: "Production Kubernetes Design Explained Simply (Masters, Workers, HAProxy)"
 author: "Nyi Nyi Phyo"
-date: 2026-05-02
+date: 2026-03-15
 tags: [kubernetes, devops, architecture, infrastructure]
 layout: post
 ---
