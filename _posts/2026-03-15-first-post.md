@@ -1,100 +1,102 @@
+---
+title: "Production Kubernetes Design Explained Simply (Masters, Workers, HAProxy)"
+author: "Nyi Nyi Phyo"
+date: 2026-05-02
+tags: [kubernetes, devops, architecture, infrastructure]
+layout: post
+---
+
+## Introduction
+
+When people start learning Kubernetes, one of the first things they usually hear is something like:  
+> “Just use 3 masters, 3 HAProxy, and 3 workers — that’s production-ready.”
+
+It sounds simple... but in real systems, it’s not really that strict. Production Kubernetes design is less about fixed numbers and more about ensuring the system doesn’t break when something fails.
+
+## The Big Picture
+
+A Kubernetes cluster is essentially a layered cake. Each layer has a specific responsibility to ensure your applications stay online.
+
+A standard production cluster usually consists of:
+1.  **A load balancer layer** (The Entry Point)
+2.  **A control plane** (The Brains)
+3.  **A worker layer** (The Muscle)
 
 ---
 
-# Scenario #1: The Spooky Full Disk (Saint-Malo)
+## 1. Master Nodes (The Control Plane)
 
-*   **Lab Source:** [SadServers](https://sadservers.com)
-*   **Difficulty:** Medium
-*   **Topic:** Linux Filesystems & Inodes
+Masters are the brain of the cluster. They decide where workloads run, what state the cluster should be in, and how everything is managed.
 
-## 1. The Problem Statement
-The scenario prompt is simple but frustrating: 
-> "There is a file `/home/admin/data/file` that cannot be created. Find the reason and fix it."
+In real production setups, the gold standard is **3 master nodes**.
 
-Upon logging in, I tried to manually create the file to see the error for myself:
+**Why 3?**
+Kubernetes uses a "majority vote" (quorum) system via **etcd**. With 3 nodes:
+*   If **1 node goes down**, the cluster still has a majority (2/3) and stays functional.
+*   Decisions remain consistent.
+*   The system stays stable during maintenance.
 
-```bash
-touch /home/admin/data/file
-# Output: touch: cannot touch '/home/admin/data/file': No space left on device
-```
-
-## 2. Initial Investigation
-My first instinct was to check the disk space using `df -h`. Usually, "No space left on device" means exactly what it says.
-
-```bash
-df -h
-```
-
-**Observations:**
-*   `/dev/sda1` is mounted on `/`.
-*   Size: 8GB, Used: 2GB, **Available: 6GB**.
-*   Wait... the disk shows **6GB free**, so why is it claiming it's full?
-
-## 3. Digging Deeper (The "Aha!" Moment)
-If the disk has physical space but won't allow new files, there are usually two suspects: **Deleted files held by processes** or **Inode exhaustion**.
-
-I checked the Inodes usage next:
-
-```bash
-df -i
-```
-
-**Result:**
-```text
-Filesystem     Inodes  IUsed  IFree IUse% Mounted on
-/dev/sda1       15000  15000      0  100% /
-```
-
-**Bingo.** The filesystem has run out of **Inodes**. 
-> **Concept:** Every file and directory on Linux requires an Inode. If you have millions of tiny 0-byte files, you will run out of Inodes long before you run out of actual disk space (GB).
-
-## 4. Identifying the Culprit
-I needed to find where all these tiny files were hiding. I ran a command to count files in subdirectories:
-
-```bash
-find / -xdev -type d -exec sh -c 'echo "$(find "$1" -maxdepth 1 | wc -l) $1"' _ {} \; | sort -rn | head -n 10
-```
-
-The output pointed directly to:
-`/var/lib/shared/tmp/` which contained over 10,000 tiny files.
-
-## 5. The Resolution
-To fix the issue immediately, I cleared out the temporary files to free up Inodes:
-
-```bash
-# Deleting thousands of files via 'rm' can sometimes fail if the argument list is too long
-# Using 'find -delete' is more efficient
-find /var/lib/shared/tmp/ -type f -delete
-```
-
-**Verification:**
-```bash
-df -i
-# Result: IUse% is now down to 15%.
-
-touch /home/admin/data/file
-# Success!
-```
+> **Note:** Going beyond 3 masters is usually reserved for massive clusters (thousands of nodes) to handle the increased API overhead.
 
 ---
 
-## 6. DevOps Retrospective
-**What did I learn?**
-Monitoring only "Disk Space Used %" is a trap. In a production environment, you must also monitor **Inode Usage**.
+## 2. HAProxy / Load Balancer Layer
 
-**Prevention Strategy:**
-1.  **Monitoring:** Add an alert in Prometheus/Grafana for `node_filesystem_files_free`.
-2.  **Cleanup Jobs:** Implement a `logrotate` or a `cron` job to clean up temporary session files/cache files that are older than X days.
-3.  **App Level:** Investigate the application code—why is it creating thousands of small files without cleaning them up?
+This is the gateway. It routes traffic—both for the API server and sometimes for your applications—to the healthy nodes. 
+
+In practice, the "3 HAProxy" rule is flexible. Most real-world setups use:
+*   **2 HAProxy nodes** with a virtual IP (Keepalived) for failover.
+*   **Cloud Load Balancers** (like AWS ELB or GCP LB) which replace the need to manage HAProxy nodes entirely.
+
+The goal here isn't a specific number; it's **High Availability (HA)**. As long as there is no single point of failure, you're doing it right.
+
+---
+
+## 3. Worker Nodes (The Muscle)
+
+Workers are where your actual applications live—your APIs, microservices, and background jobs. Unlike masters, workers are highly flexible.
+
+Instead of a fixed number, consider your **scaling strategy**:
+*   **Small systems:** Might start with 2 or 3 workers.
+*   **Production growth:** 10, 50, or hundreds of nodes.
+*   **Modern approach:** Use **Auto-scaling**. The cluster should add workers when traffic peaks and remove them when things get quiet.
+
+**The Rule of Thumb:** Don't think "we need 3 workers." Think "we need enough resources to handle our peak load plus a buffer for node failure."
 
 ---
 
-### 🚀 Technical Toolkit Used:
-| Command | Purpose |
-| :--- | :--- |
-| `touch` | Validated the error message |
-| `df -h` | Checked human-readable disk space |
-| `df -i` | Checked Inode count (The solution) |
-| `find` | Located the directory with the most files |
+## Real-World Production View
+
+A standard, reliable production setup usually looks like this:
+
+| Component | Recommendation | Logic |
+| :--- | :--- | :--- |
+| **Load Balancer** | 2 Nodes or Cloud LB | Redundancy for the entry point. |
+| **Masters** | 3 Nodes | Maintains quorum for the distributed database (etcd). |
+| **Workers** | $N + 1$ | Scalable based on application demand. |
 
 ---
+
+## Common Misunderstandings
+
+A lot of people think Kubernetes has a fixed “correct architecture.” But the truth is: **There is no universal 3-3-3 rule.** That’s just a learning simplification.
+
+Real systems are designed based on:
+*   **Traffic volume**
+*   **Reliability needs** (SLA)
+*   **Budget**
+*   **Scaling expectations**
+
+## What Actually Matters?
+
+Instead of focusing on arbitrary numbers, ask yourself these four questions:
+1.  **Resilience:** Can the system survive a node failure?
+2.  **Scalability:** Can it scale when traffic increases?
+3.  **Redundancy:** Is there a single point of failure?
+4.  **Self-healing:** Can we recover automatically without human intervention?
+
+If the answer to these is **"Yes,"** your architecture is already solid.
+
+## Final Thought
+
+When you move from learning to real engineering, you realize that it’s not about building a "perfect" static architecture. It’s about building a dynamic system that keeps working even when things go wrong.
